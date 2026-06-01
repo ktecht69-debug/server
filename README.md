@@ -1,0 +1,2 @@
+# server
+activation_license 
