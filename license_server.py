@@ -288,12 +288,8 @@ def plan_to_days(plan: str) -> int:
     return 365 if plan == "1YEAR" else 183
 
 
-def send_license_email(
-    to_email: str,
-    license_key: str,
-    plan: str,
-    expires_at: str,
-) -> bool:
+def send_license_email(to_email: str, license_key: str, plan: str, expires_at: str,) -> bool:
+    print(f"[EMAIL] Attempting to send to {to_email}, sender={GMAIL_SENDER}, has_password={bool(GMAIL_APP_PASSWORD)}")
     """
     Sends the license key to the client's email via Gmail SMTP.
     Returns True if sent successfully, False if failed.
