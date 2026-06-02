@@ -23,8 +23,12 @@ from fastapi import FastAPI, Request, HTTPException
 app = FastAPI(title="Kennartech License Server")
 
 DB_PATH = "licenses.db"
-SERVER_SECRET = os.getenv("LICENSE_SERVER_SECRET", "change-this-secret-in-production")
-PAYSTACK_SECRET = os.getenv("PAYSTACK_SECRET_KEY", "")
+SERVER_SECRET = os.getenv(
+    "LICENSE_SERVER_SECRET", "yk55srf&7q^i@mi+f*tw_%ll$^w@=fwa6&8tr^2qwv1pp"
+)
+PAYSTACK_SECRET = os.getenv(
+    "PAYSTACK_SECRET_KEY", "sk_test_aff26a6f4826ff42199f415d261478071ab220db"
+)
 
 
 # ──------- DB SETUP ────────────────────────────────────────────
