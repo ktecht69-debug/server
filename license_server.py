@@ -325,6 +325,17 @@
 #     return JSONResponse({"status": "ok"})
 
 
+# license_server/main.py
+# ═══════════════════════════════════════════════════════════════
+# YOUR ONLINE LICENSE SERVER
+# Host this separately on Railway.app.com, Render.com, or any VPS.
+# This is NOT part of the desktop app bundle.
+# It's a tiny FastAPI app that holds the master license key DB.
+#
+# Install: pip install fastapi uvicorn sqlmodel paystack
+# Run:     uvicorn main:app --host 0.0.0.0 --port 8000
+# ═══════════════════════════════════════════════════
+
 import os
 import hmac
 import hashlib
@@ -581,32 +592,205 @@ async def paystack_webhook(request: Request):
     return JSONResponse({"status": "ok"})
 
 
+# @app.get("/licensing/paystack/callback")
+# async def paystack_callback(request: Request):
+#     reference = request.query_params.get("trxref") or request.query_params.get(
+#         "reference"
+#     )
+#     return HTMLResponse(
+#         content=f"""
+#     <!DOCTYPE html><html>
+#     <head><title>Payment Complete</title>
+#     <style>
+#       body {{font-family:Arial,sans-serif;display:flex;justify-content:center;
+#              align-items:center;height:100vh;margin:0;background:#f8f9ff;}}
+#       .box {{text-align:center;background:white;padding:40px;border-radius:12px;
+#              box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:420px;}}
+#       code {{background:#f1f5f9;padding:4px 10px;border-radius:6px;font-size:13px;}}
+#     </style></head>
+#     <body><div class="box">
+#       <div style="font-size:60px"></div>
+#       <h2 style="color:#1a1d35">Payment Successful!</h2>
+#       <p style="color:#6b7280">Your license key has been sent to your email.<br>
+#          Check your inbox and spam folder.</p>
+#       <p><code>Ref: {reference or 'N/A'}</code></p>
+#       <p style="color:#6b7280;font-size:13px;margin-top:20px">
+#         Open <strong>RetailersPOS</strong> → Subscription<br>
+#         and paste your key to activate.</p>
+#       <p style="color:#9ca3af;font-size:12px">Powered by Kennartech</p>
+#     </div></body></html>
+#     """
+#     )
+
+
 @app.get("/licensing/paystack/callback")
 async def paystack_callback(request: Request):
     reference = request.query_params.get("trxref") or request.query_params.get(
         "reference"
     )
+    local_port = request.query_params.get("local_port", "")
+
+    # Build the redirect URL back into the desktop app
+    if local_port:
+        redirect_target = f"http://127.0.0.1:{local_port}/licensing/subscription"
+    else:
+        redirect_target = ""  # fallback — no auto redirect
+
     return HTMLResponse(
         content=f"""
-    <!DOCTYPE html><html>
-    <head><title>Payment Complete</title>
-    <style>
-      body {{font-family:Arial,sans-serif;display:flex;justify-content:center;
-             align-items:center;height:100vh;margin:0;background:#f8f9ff;}}
-      .box {{text-align:center;background:white;padding:40px;border-radius:12px;
-             box-shadow:0 4px 20px rgba(0,0,0,0.1);max-width:420px;}}
-      code {{background:#f1f5f9;padding:4px 10px;border-radius:6px;font-size:13px;}}
-    </style></head>
-    <body><div class="box">
-      <div style="font-size:60px"></div>
-      <h2 style="color:#1a1d35">Payment Successful!</h2>
-      <p style="color:#6b7280">Your license key has been sent to your email.<br>
-         Check your inbox and spam folder.</p>
-      <p><code>Ref: {reference or 'N/A'}</code></p>
-      <p style="color:#6b7280;font-size:13px;margin-top:20px">
-        Open <strong>RetailersPOS</strong> → Subscription<br>
-        and paste your key to activate.</p>
-      <p style="color:#9ca3af;font-size:12px">Powered by Kennartech</p>
-    </div></body></html>
-    """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Payment Successful</title>
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+    body {{
+      font-family: Arial, sans-serif;
+      background: #d4edda;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }}
+
+    .card {{
+      background: white;
+      border-radius: 12px;
+      padding: 40px 36px;
+      max-width: 460px;
+      width: 100%;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      text-align: center;
+    }}
+
+    .icon {{
+      font-size: 56px;
+      margin-bottom: 12px;
+    }}
+
+    h2 {{
+      color: #1a1d35;
+      font-size: 22px;
+      margin-bottom: 10px;
+    }}
+
+    p {{
+      color: #6b7280;
+      font-size: 14px;
+      line-height: 1.6;
+      margin-bottom: 10px;
+    }}
+
+    .ref {{
+      display: inline-block;
+      background: #f1f5f9;
+      padding: 5px 14px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 13px;
+      color: #475569;
+      margin: 8px 0 16px;
+    }}
+
+    .steps {{
+      background: #eff6ff;
+      border-left: 4px solid #818cf8;
+      border-radius: 4px;
+      padding: 14px 16px;
+      text-align: left;
+      margin: 16px 0;
+    }}
+
+    .steps p {{
+      color: #1e40af;
+      margin: 0;
+      font-size: 13px;
+    }}
+
+    .btn {{
+      display: inline-block;
+      margin-top: 20px;
+      padding: 13px 32px;
+      background: #1a7a4a;
+      color: white;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: bold;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      width: 100%;
+    }}
+
+    .btn:hover {{ background: #155f3a; }}
+
+    .timer {{
+      margin-top: 12px;
+      font-size: 12px;
+      color: #9ca3af;
+    }}
+
+    .footer {{
+      margin-top: 24px;
+      font-size: 11px;
+      color: #9ca3af;
+    }}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon"></div>
+    <h2>Payment Successful!</h2>
+    <p>Your license key has been sent to your email.<br>
+       Check your <strong>inbox</strong> and <strong>spam folder</strong>.</p>
+
+    <div class="ref">Ref: {reference or 'N/A'}</div>
+
+    <div class="steps">
+      <p>
+        <strong>Next steps:</strong><br>
+        1. Check your email for the license key<br>
+        2. Copy the key (RPOS-XXXX-XXXX-XXXX)<br>
+        3. Go to RetailersPOS → Subscription<br>
+        4. Paste the key and click <strong>Activate</strong>
+      </p>
+    </div>
+
+    {"" if not redirect_target else f'''
+    <button class="btn" onclick="goToApp()">
+      ➜ Go to Subscription Page
+    </button>
+    <p class="timer" id="timer">Redirecting in <span id="count">10</span> seconds...</p>
+    '''}
+
+    <p class="footer">Powered by Kennartech</p>
+  </div>
+
+  {"" if not redirect_target else f'''
+  <script>
+    var seconds = 10;
+    var target  = "{redirect_target}";
+
+    var interval = setInterval(function() {{
+      seconds--;
+      var el = document.getElementById("count");
+      if (el) el.textContent = seconds;
+      if (seconds <= 0) {{
+        clearInterval(interval);
+        goToApp();
+      }}
+    }}, 1000);
+
+    function goToApp() {{
+      window.location.href = target;
+    }}
+  </script>
+  '''}
+</body>
+</html>
+"""
     )
