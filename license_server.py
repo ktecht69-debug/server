@@ -316,6 +316,179 @@ async def paystack_webhook(request: Request):
     return JSONResponse({"status": "ok"})
 
 
+# @app.get(path="/licensing/paystack/callback")
+# async def paystack_callback(request: Request):
+#     reference = request.query_params.get("trxref") or request.query_params.get(
+#         "reference"
+#     )
+#     local_port = request.query_params.get("local_port", "")
+
+#     # Build the redirect URL back into the desktop app
+#     if local_port:
+#         redirect_target = f"http://127.0.0.1:{local_port}/licensing/subscription"
+#     else:
+#         redirect_target = ""  # fallback — no auto redirect
+
+#     return HTMLResponse(
+#         content=f"""
+# <!DOCTYPE html>
+# <html lang="en">
+# <head>
+#   <meta charset="UTF-8">
+#   <title>Payment Successful</title>
+#   <style>
+#     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+#     body {{
+#       font-family: Arial, sans-serif;
+#       background: #d4edda;
+#       min-height: 100vh;
+#       display: flex;
+#       flex-direction: column;
+#       align-items: center;
+#       justify-content: center;
+#       padding: 20px;
+#     }}
+
+#     .card {{
+#       background: white;
+#       border-radius: 12px;
+#       padding: 40px 36px;
+#       max-width: 460px;
+#       width: 100%;
+#       box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+#       text-align: center;
+#     }}
+
+#     .icon {{
+#       font-size: 56px;
+#       margin-bottom: 12px;
+#     }}
+
+#     h2 {{
+#       color: #1a1d35;
+#       font-size: 22px;
+#       margin-bottom: 10px;
+#     }}
+
+#     p {{
+#       color: #6b7280;
+#       font-size: 14px;
+#       line-height: 1.6;
+#       margin-bottom: 10px;
+#     }}
+
+#     .ref {{
+#       display: inline-block;
+#       background: #f1f5f9;
+#       padding: 5px 14px;
+#       border-radius: 6px;
+#       font-family: monospace;
+#       font-size: 13px;
+#       color: #475569;
+#       margin: 8px 0 16px;
+#     }}
+
+#     .steps {{
+#       background: #eff6ff;
+#       border-left: 4px solid #818cf8;
+#       border-radius: 4px;
+#       padding: 14px 16px;
+#       text-align: left;
+#       margin: 16px 0;
+#     }}
+
+#     .steps p {{
+#       color: #1e40af;
+#       margin: 0;
+#       font-size: 13px;
+#     }}
+
+#     .btn {{
+#       display: inline-block;
+#       margin-top: 20px;
+#       padding: 13px 32px;
+#       background: #1a7a4a;
+#       color: white;
+#       border-radius: 8px;
+#       font-size: 15px;
+#       font-weight: bold;
+#       text-decoration: none;
+#       cursor: pointer;
+#       border: none;
+#       width: 100%;
+#     }}
+
+#     .btn:hover {{ background: #155f3a; }}
+
+#     .timer {{
+#       margin-top: 12px;
+#       font-size: 12px;
+#       color: #9ca3af;
+#     }}
+
+#     .footer {{
+#       margin-top: 24px;
+#       font-size: 11px;
+#       color: #9ca3af;
+#     }}
+#   </style>
+# </head>
+# <body>
+#   <div class="card">
+#     <div class="icon"></div>
+#     <h2>Payment Successful!</h2>
+#     <p>Your license key has been sent to your email.<br>
+#        Check your <strong>inbox</strong> and <strong>spam folder</strong>.</p>
+
+#     <div class="ref">Ref: {reference or 'N/A'}</div>
+
+#     <div class="steps">
+#       <p>
+#         <strong>Next steps:</strong><br>
+#         1. Check your email for the license key<br>
+#         2. Copy the key (RPOS-XXXX-XXXX-XXXX)<br>
+#         3. Go to RetailersPOS → Subscription<br>
+#         4. Paste the key and click <strong>Activate</strong>
+#       </p>
+#     </div>
+
+#     {"" if not redirect_target else f'''
+#     <button class="btn" onclick="goToApp()">
+#       ➜ Go to Subscription Page
+#     </button>
+#     <p class="timer" id="timer">Redirecting in <span id="count">10</span> seconds...</p>
+#     '''}
+
+#     <p class="footer">Powered by Kennartech</p>
+#   </div>
+
+#   {"" if not redirect_target else f'''
+#   <script>
+#     var seconds = 10;
+#     var target  = "{redirect_target}";
+
+#     var interval = setInterval(function() {{
+#       seconds--;
+#       var el = document.getElementById("count");
+#       if (el) el.textContent = seconds;
+#       if (seconds <= 0) {{
+#         clearInterval(interval);
+#         goToApp();
+#       }}
+#     }}, 1000);
+
+#     function goToApp() {{
+#       window.location.href = target;
+#     }}
+#   </script>
+#   '''}
+# </body>
+# </html>
+# """
+#     )
+
+
 @app.get(path="/licensing/paystack/callback")
 async def paystack_callback(request: Request):
     reference = request.query_params.get("trxref") or request.query_params.get(
@@ -323,11 +496,10 @@ async def paystack_callback(request: Request):
     )
     local_port = request.query_params.get("local_port", "")
 
-    # Build the redirect URL back into the desktop app
     if local_port:
         redirect_target = f"http://127.0.0.1:{local_port}/licensing/subscription"
     else:
-        redirect_target = ""  # fallback — no auto redirect
+        redirect_target = ""
 
     return HTMLResponse(
         content=f"""
@@ -337,6 +509,12 @@ async def paystack_callback(request: Request):
   <meta charset="UTF-8">
   <title>Payment Successful</title>
   <style>
+    /* ── Custom scrollbar (HH) ── */
+    ::-webkit-scrollbar {{ width: 5px; height: 5px; }}
+    ::-webkit-scrollbar-track {{ background: transparent; }}
+    ::-webkit-scrollbar-thumb {{ background: rgba(46,204,113,0.3); border-radius: 10px; }}
+    ::-webkit-scrollbar-thumb:hover {{ background: rgba(46,204,113,1.0); }}
+
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
     body {{
@@ -344,93 +522,88 @@ async def paystack_callback(request: Request):
       background: #d4edda;
       min-height: 100vh;
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: 16px;
     }}
 
     .card {{
       background: white;
-      border-radius: 12px;
-      padding: 40px 36px;
-      max-width: 460px;
+      border-radius: 14px;
+      padding: 28px 24px;
+      max-width: 380px;
       width: 100%;
-      box-shadow: 0 4px 24px rgba(0,0,0,0.10);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
       text-align: center;
     }}
 
-    .icon {{
-      font-size: 56px;
-      margin-bottom: 12px;
-    }}
+    .icon {{ font-size: 40px; margin-bottom: 8px; }}
 
     h2 {{
       color: #1a1d35;
-      font-size: 22px;
-      margin-bottom: 10px;
+      font-size: 18px;
+      margin-bottom: 6px;
     }}
 
-    p {{
+    .sub {{
       color: #6b7280;
-      font-size: 14px;
-      line-height: 1.6;
+      font-size: 12px;
+      line-height: 1.5;
       margin-bottom: 10px;
     }}
 
     .ref {{
       display: inline-block;
       background: #f1f5f9;
-      padding: 5px 14px;
+      padding: 4px 12px;
       border-radius: 6px;
       font-family: monospace;
-      font-size: 13px;
+      font-size: 11px;
       color: #475569;
-      margin: 8px 0 16px;
+      margin-bottom: 12px;
     }}
 
     .steps {{
       background: #eff6ff;
-      border-left: 4px solid #818cf8;
+      border-left: 3px solid #818cf8;
       border-radius: 4px;
-      padding: 14px 16px;
+      padding: 10px 12px;
       text-align: left;
-      margin: 16px 0;
+      margin-bottom: 14px;
     }}
 
     .steps p {{
       color: #1e40af;
+      font-size: 11px;
+      line-height: 1.7;
       margin: 0;
-      font-size: 13px;
     }}
 
     .btn {{
-      display: inline-block;
-      margin-top: 20px;
-      padding: 13px 32px;
+      width: 100%;
+      padding: 11px;
       background: #1a7a4a;
       color: white;
-      border-radius: 8px;
-      font-size: 15px;
-      font-weight: bold;
-      text-decoration: none;
-      cursor: pointer;
       border: none;
-      width: 100%;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-bottom: 8px;
     }}
 
     .btn:hover {{ background: #155f3a; }}
 
     .timer {{
-      margin-top: 12px;
-      font-size: 12px;
+      font-size: 11px;
       color: #9ca3af;
+      margin-bottom: 10px;
     }}
 
     .footer {{
-      margin-top: 24px;
-      font-size: 11px;
-      color: #9ca3af;
+      font-size: 10px;
+      color: #d1d5db;
+      margin-top: 6px;
     }}
   </style>
 </head>
@@ -438,8 +611,10 @@ async def paystack_callback(request: Request):
   <div class="card">
     <div class="icon"></div>
     <h2>Payment Successful!</h2>
-    <p>Your license key has been sent to your email.<br>
-       Check your <strong>inbox</strong> and <strong>spam folder</strong>.</p>
+    <p class="sub">
+      Your license key has been sent to your email.<br>
+      Check your <strong>inbox</strong> and <strong>spam folder</strong>.
+    </p>
 
     <div class="ref">Ref: {reference or 'N/A'}</div>
 
@@ -454,10 +629,8 @@ async def paystack_callback(request: Request):
     </div>
 
     {"" if not redirect_target else f'''
-    <button class="btn" onclick="goToApp()">
-      ➜ Go to Subscription Page
-    </button>
-    <p class="timer" id="timer">Redirecting in <span id="count">10</span> seconds...</p>
+    <button class="btn" onclick="goToApp()">➜ Go to Subscription Page</button>
+    <p class="timer">Redirecting in <span id="count">10</span> seconds...</p>
     '''}
 
     <p class="footer">Powered by Kennartech</p>
@@ -466,21 +639,14 @@ async def paystack_callback(request: Request):
   {"" if not redirect_target else f'''
   <script>
     var seconds = 10;
-    var target  = "{redirect_target}";
-
+    var target = "{redirect_target}";
     var interval = setInterval(function() {{
       seconds--;
       var el = document.getElementById("count");
       if (el) el.textContent = seconds;
-      if (seconds <= 0) {{
-        clearInterval(interval);
-        goToApp();
-      }}
+      if (seconds <= 0) {{ clearInterval(interval); goToApp(); }}
     }}, 1000);
-
-    function goToApp() {{
-      window.location.href = target;
-    }}
+    function goToApp() {{ window.location.href = target; }}
   </script>
   '''}
 </body>
