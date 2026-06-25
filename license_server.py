@@ -44,6 +44,18 @@ def init_db():
         )
     """
     )
+    # ── Tracks which hardware devices have already used their free trial ──
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS trial_devices (
+            id          SERIAL PRIMARY KEY,
+            fingerprint TEXT UNIQUE NOT NULL,
+            tenant_id   INTEGER,
+            license_key TEXT,
+            created_at  TIMESTAMPTZ DEFAULT NOW()
+        )
+    """
+    )
     conn.commit()
     cur.close()
     conn.close()
@@ -59,7 +71,11 @@ def generate_license_key() -> str:
 
 
 def plan_to_days(plan: str) -> int:
-    return 365 if plan == "1YEAR" else 183
+    if plan == "1YEAR":
+        return 365
+    if plan == "TRIAL":
+        return 30
+    return 183
 
 
 # ────── Email via Resend http API ─────────────
@@ -144,6 +160,11 @@ class CreateLicenseRequest(BaseModel):
     admin_secret: str
 
 
+class StartTrialRequest(BaseModel):
+    tenant_id: int
+    fingerprint: str
+
+
 @app.get(path="/")
 def root():
     return {"service": "Kennartech License Server", "status": "running"}
@@ -205,39 +226,6 @@ async def verify_license(body: VerifyRequest):
     }
 
 
-# @app.post(path="/api/verify-license")
-# async def verify_license(body: VerifyRequest):
-#     conn = get_db()
-#     cur = conn.cursor()
-#     cur.execute(
-#         "SELECT * FROM licenses WHERE license_key = %s", (body.license_key.upper(),)
-#     )
-#     row = cur.fetchone()
-#     cur.close()
-#     conn.close()
-
-#     if not row:
-#         return {"valid": False, "message": "License key not found."}
-#     if not row["is_active"]:
-#         return {"valid": False, "message": "License key has been deactivated."}
-
-#     expires_at = row["expires_at"]
-#     if expires_at.tzinfo is None:
-#         expires_at = expires_at.replace(tzinfo=timezone.utc)
-#     now = datetime.now(tz=timezone.utc)
-
-#     if now > expires_at + timedelta(days=3):
-#         return {"valid": False, "message": "License has expired. Please renew."}
-
-#     return {
-#         "valid": True,
-#         "message": "License is valid.",
-#         "plan": row["plan"],
-#         "expires_at": row["expires_at"].isoformat(),
-#         "paystack_reference": row["paystack_reference"],
-#     }
-
-
 @app.post(path="/api/create-license")
 async def create_license(body: CreateLicenseRequest):
     if body.admin_secret != os.getenv(key="ADMIN_SECRET", default="my-admin-secret"):
@@ -261,6 +249,55 @@ async def create_license(body: CreateLicenseRequest):
         "success": True,
         "license_key": key,
         "plan": body.plan,
+        "expires_at": expires_at.isoformat(),
+    }
+
+
+@app.post(path="/api/start-trial")
+async def start_trial(body: StartTrialRequest):
+    """
+    Called by the desktop app on first launch.
+    Checks this device's hardware fingerprint against every device that's
+    ever had a free trial. One trial per device, no matter how many times
+    the app is reinstalled or how many tenant IDs get created on it.
+    """
+    conn = get_db()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT * FROM trial_devices WHERE fingerprint = %s", (body.fingerprint,)
+    )
+    existing = cur.fetchone()
+
+    if existing:
+        cur.close()
+        conn.close()
+        return {
+            "success": False,
+            "message": "This device has already used its free trial.",
+        }
+
+    key = generate_license_key()
+    expires_at = datetime.now(tz=timezone.utc) + timedelta(days=plan_to_days("TRIAL"))
+
+    cur.execute(
+        """INSERT INTO licenses (license_key, tenant_id, plan, expires_at)
+           VALUES (%s, %s, %s, %s)""",
+        (key, body.tenant_id, "TRIAL", expires_at),
+    )
+    cur.execute(
+        """INSERT INTO trial_devices (fingerprint, tenant_id, license_key)
+           VALUES (%s, %s, %s)""",
+        (body.fingerprint, body.tenant_id, key),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return {
+        "success": True,
+        "license_key": key,
+        "plan": "TRIAL",
         "expires_at": expires_at.isoformat(),
     }
 
@@ -316,179 +353,6 @@ async def paystack_webhook(request: Request):
     return JSONResponse({"status": "ok"})
 
 
-# @app.get(path="/licensing/paystack/callback")
-# async def paystack_callback(request: Request):
-#     reference = request.query_params.get("trxref") or request.query_params.get(
-#         "reference"
-#     )
-#     local_port = request.query_params.get("local_port", "")
-
-#     # Build the redirect URL back into the desktop app
-#     if local_port:
-#         redirect_target = f"http://127.0.0.1:{local_port}/licensing/subscription"
-#     else:
-#         redirect_target = ""  # fallback — no auto redirect
-
-#     return HTMLResponse(
-#         content=f"""
-# <!DOCTYPE html>
-# <html lang="en">
-# <head>
-#   <meta charset="UTF-8">
-#   <title>Payment Successful</title>
-#   <style>
-#     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-
-#     body {{
-#       font-family: Arial, sans-serif;
-#       background: #d4edda;
-#       min-height: 100vh;
-#       display: flex;
-#       flex-direction: column;
-#       align-items: center;
-#       justify-content: center;
-#       padding: 20px;
-#     }}
-
-#     .card {{
-#       background: white;
-#       border-radius: 12px;
-#       padding: 40px 36px;
-#       max-width: 460px;
-#       width: 100%;
-#       box-shadow: 0 4px 24px rgba(0,0,0,0.10);
-#       text-align: center;
-#     }}
-
-#     .icon {{
-#       font-size: 56px;
-#       margin-bottom: 12px;
-#     }}
-
-#     h2 {{
-#       color: #1a1d35;
-#       font-size: 22px;
-#       margin-bottom: 10px;
-#     }}
-
-#     p {{
-#       color: #6b7280;
-#       font-size: 14px;
-#       line-height: 1.6;
-#       margin-bottom: 10px;
-#     }}
-
-#     .ref {{
-#       display: inline-block;
-#       background: #f1f5f9;
-#       padding: 5px 14px;
-#       border-radius: 6px;
-#       font-family: monospace;
-#       font-size: 13px;
-#       color: #475569;
-#       margin: 8px 0 16px;
-#     }}
-
-#     .steps {{
-#       background: #eff6ff;
-#       border-left: 4px solid #818cf8;
-#       border-radius: 4px;
-#       padding: 14px 16px;
-#       text-align: left;
-#       margin: 16px 0;
-#     }}
-
-#     .steps p {{
-#       color: #1e40af;
-#       margin: 0;
-#       font-size: 13px;
-#     }}
-
-#     .btn {{
-#       display: inline-block;
-#       margin-top: 20px;
-#       padding: 13px 32px;
-#       background: #1a7a4a;
-#       color: white;
-#       border-radius: 8px;
-#       font-size: 15px;
-#       font-weight: bold;
-#       text-decoration: none;
-#       cursor: pointer;
-#       border: none;
-#       width: 100%;
-#     }}
-
-#     .btn:hover {{ background: #155f3a; }}
-
-#     .timer {{
-#       margin-top: 12px;
-#       font-size: 12px;
-#       color: #9ca3af;
-#     }}
-
-#     .footer {{
-#       margin-top: 24px;
-#       font-size: 11px;
-#       color: #9ca3af;
-#     }}
-#   </style>
-# </head>
-# <body>
-#   <div class="card">
-#     <div class="icon"></div>
-#     <h2>Payment Successful!</h2>
-#     <p>Your license key has been sent to your email.<br>
-#        Check your <strong>inbox</strong> and <strong>spam folder</strong>.</p>
-
-#     <div class="ref">Ref: {reference or 'N/A'}</div>
-
-#     <div class="steps">
-#       <p>
-#         <strong>Next steps:</strong><br>
-#         1. Check your email for the license key<br>
-#         2. Copy the key (RPOS-XXXX-XXXX-XXXX)<br>
-#         3. Go to RetailersPOS → Subscription<br>
-#         4. Paste the key and click <strong>Activate</strong>
-#       </p>
-#     </div>
-
-#     {"" if not redirect_target else f'''
-#     <button class="btn" onclick="goToApp()">
-#       ➜ Go to Subscription Page
-#     </button>
-#     <p class="timer" id="timer">Redirecting in <span id="count">10</span> seconds...</p>
-#     '''}
-
-#     <p class="footer">Powered by Kennartech</p>
-#   </div>
-
-#   {"" if not redirect_target else f'''
-#   <script>
-#     var seconds = 10;
-#     var target  = "{redirect_target}";
-
-#     var interval = setInterval(function() {{
-#       seconds--;
-#       var el = document.getElementById("count");
-#       if (el) el.textContent = seconds;
-#       if (seconds <= 0) {{
-#         clearInterval(interval);
-#         goToApp();
-#       }}
-#     }}, 1000);
-
-#     function goToApp() {{
-#       window.location.href = target;
-#     }}
-#   </script>
-#   '''}
-# </body>
-# </html>
-# """
-#     )
-
-
 @app.get(path="/licensing/paystack/callback")
 async def paystack_callback(request: Request):
     reference = request.query_params.get("trxref") or request.query_params.get(
@@ -509,7 +373,6 @@ async def paystack_callback(request: Request):
   <meta charset="UTF-8">
   <title>Payment Successful</title>
   <style>
-    /* ── Custom scrollbar (HH) ── */
     ::-webkit-scrollbar {{ width: 5px; height: 5px; }}
     ::-webkit-scrollbar-track {{ background: transparent; }}
     ::-webkit-scrollbar-thumb {{ background: rgba(46,204,113,0.3); border-radius: 10px; }}
