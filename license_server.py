@@ -31,7 +31,7 @@ def init_db():
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        """
+        query="""
         CREATE TABLE IF NOT EXISTS licenses (
             id                 SERIAL PRIMARY KEY,
             license_key        TEXT UNIQUE NOT NULL,
@@ -46,7 +46,7 @@ def init_db():
     )
     # ── Tracks which hardware devices have already used their free trial ──
     cur.execute(
-        """
+        query="""
         CREATE TABLE IF NOT EXISTS trial_devices (
             id          SERIAL PRIMARY KEY,
             fingerprint TEXT UNIQUE NOT NULL,
@@ -302,6 +302,7 @@ async def start_trial(body: StartTrialRequest):
     }
 
 
+# ── UPDATED: paystack_webhook with Gap 1 (expiry extension) + Gap 2 (idempotency) ──
 @app.post(path="/paystack/webhook")
 async def paystack_webhook(request: Request):
     body = await request.body()
@@ -320,13 +321,45 @@ async def paystack_webhook(request: Request):
         reference = data["data"]["reference"]
         customer_email = data["data"]["customer"]["email"]
 
-        key = generate_license_key()
-        expires_at = datetime.now(tz=timezone.utc) + timedelta(
-            days=plan_to_days(plan=plan)
-        )
-
         conn = get_db()
         cur = conn.cursor()
+
+        # ── Gap 2: Idempotency — skip if this payment was already processed ──
+        cur.execute(
+            "SELECT id FROM licenses WHERE paystack_reference = %s", (reference,)
+        )
+        if cur.fetchone():
+            cur.close()
+            conn.close()
+            print(f"[WEBHOOK] Duplicate reference {reference} — skipping.")
+            return JSONResponse({"status": "ok"})
+
+        # ── Gap 1: Extend from current expiry if subscription still active ──
+        base_date = datetime.now(tz=timezone.utc)
+        if tenant_id:
+            cur.execute(
+                """
+                SELECT expires_at FROM licenses
+                WHERE tenant_id = %s AND is_active = 1
+                ORDER BY expires_at DESC
+                LIMIT 1
+                """,
+                (tenant_id,),
+            )
+            existing = cur.fetchone()
+            if existing:
+                current_expiry = existing["expires_at"]
+                if current_expiry.tzinfo is None:
+                    current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+                if current_expiry > base_date:
+                    base_date = current_expiry  # extend from current expiry
+                    print(
+                        f"[LICENSE] Extending from {current_expiry.date()} for tenant={tenant_id}"
+                    )
+
+        expires_at = base_date + timedelta(days=plan_to_days(plan=plan))
+
+        key = generate_license_key()
         cur.execute(
             """INSERT INTO licenses (license_key, tenant_id, plan, expires_at, paystack_reference)
                VALUES (%s, %s, %s, %s, %s)
@@ -338,7 +371,7 @@ async def paystack_webhook(request: Request):
         conn.close()
 
         print(
-            f"[LICENSE]  Generated {key} for tenant={tenant_id} email={customer_email}"
+            f"[LICENSE] Generated {key} for tenant={tenant_id} email={customer_email} expires={expires_at.date()}"
         )
 
         asyncio.create_task(
@@ -477,6 +510,9 @@ async def paystack_callback(request: Request):
     <p class="sub">
       Your license key has been sent to your email.<br>
       Check your <strong>inbox</strong> and <strong>spam folder</strong>.
+    </p>
+    <p style="color: #dc2626; font-size: 11px; margin-top: 8px;">
+      ⚠️ If you don't see the email, check your <strong>Spam</strong> and <strong>Promotions</strong> folders.
     </p>
 
     <div class="ref">Ref: {reference or 'N/A'}</div>
