@@ -12,6 +12,7 @@ from psycopg2.extras import RealDictCursor
 from datetime import datetime, timezone, timedelta
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, HTMLResponse
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 app = FastAPI(title="Kennartech License Server")
@@ -21,6 +22,21 @@ PAYSTACK_SECRET = os.getenv(key="PAYSTACK_SECRET_KEY", default="")
 RESEND_API_KEY = os.getenv(key="RESEND_API_KEY", default="")
 DATABASE_URL = os.getenv(key="DATABASE_URL", default="")
 RESEND_FROM = "Kennartech RetailersPOS <onboarding@resend.dev>"
+
+
+# ── Ed25519 signing key — proves a license row was issued by THIS server ──
+SIGNING_PRIVATE_KEY_HEX = os.getenv(key="LICENSE_SIGNING_PRIVATE_KEY", default="")
+if not SIGNING_PRIVATE_KEY_HEX:
+    raise RuntimeError("LICENSE_SIGNING_PRIVATE_KEY env var is not set!")
+
+_signing_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(SIGNING_PRIVATE_KEY_HEX))
+
+
+def sign_license(tenant_id: int, license_key: str, plan: str, expires_at: datetime, is_active: bool) -> str:
+    """Signs the license fields so the client can detect local tampering."""
+    message = f"{tenant_id}|{license_key}|{plan}|{int(expires_at.timestamp())}|{1 if is_active else 0}"
+    signature = _signing_key.sign(message.encode())
+    return signature.hex()
 
 
 def get_db():
@@ -217,12 +233,22 @@ async def verify_license(body: VerifyRequest):
     if now > expires_at + timedelta(days=3):
         return {"valid": False, "message": "License has expired. Please renew."}
 
+    # ── Sign the response so the client can detect local tampering ──
+    signature = sign_license(
+        tenant_id=body.tenant_id,
+        license_key=row["license_key"],
+        plan=row["plan"],
+        expires_at=expires_at,
+        is_active=bool(row["is_active"]),
+    )
+
     return {
         "valid": True,
         "message": "License is valid.",
         "plan": row["plan"],
         "expires_at": row["expires_at"].isoformat(),
         "paystack_reference": row["paystack_reference"],
+        "signature": signature,
     }
 
 
@@ -294,11 +320,21 @@ async def start_trial(body: StartTrialRequest):
     cur.close()
     conn.close()
 
+    # ── Sign this response too ──
+    signature = sign_license(
+        tenant_id=body.tenant_id,
+        license_key=key,
+        plan="TRIAL",
+        expires_at=expires_at,
+        is_active=True,
+    )
+
     return {
         "success": True,
         "license_key": key,
         "plan": "TRIAL",
         "expires_at": expires_at.isoformat(),
+        "signature": signature,
     }
 
 
@@ -306,10 +342,10 @@ async def start_trial(body: StartTrialRequest):
 @app.post(path="/paystack/webhook")
 async def paystack_webhook(request: Request):
     body = await request.body()
-    signature = request.headers.get("x-paystack-signature", "")
+    signature_header = request.headers.get("x-paystack-signature", "")
     expected = hmac.new(PAYSTACK_SECRET.encode(), body, hashlib.sha512).hexdigest()
 
-    if not hmac.compare_digest(expected, signature):
+    if not hmac.compare_digest(expected, signature_header):
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     data = json.loads(body)
