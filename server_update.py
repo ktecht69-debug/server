@@ -12,15 +12,45 @@
 # from datetime import datetime, timezone, timedelta
 # from fastapi import FastAPI, Request, HTTPException
 # from fastapi.responses import JSONResponse, HTMLResponse
+# from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+# from slowapi import Limiter, _rate_limit_exceeded_handler
+# from slowapi.util import get_remote_address
+# from slowapi.errors import RateLimitExceeded
 
 
 # app = FastAPI(title="Kennartech License Server")
+
+
+# # ── Rate limiter — IP-based, in-memory (fine for a single Railway instance) ──
+# limiter = Limiter(key_func=get_remote_address)
+# app.state.limiter = limiter
+# app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # PAYSTACK_SECRET = os.getenv(key="PAYSTACK_SECRET_KEY", default="")
 # RESEND_API_KEY = os.getenv(key="RESEND_API_KEY", default="")
 # DATABASE_URL = os.getenv(key="DATABASE_URL", default="")
 # RESEND_FROM = "Kennartech RetailersPOS <onboarding@resend.dev>"
+
+
+# # ── Ed25519 signing key — proves a license row was issued by THIS server ──
+# SIGNING_PRIVATE_KEY_HEX = os.getenv(key="LICENSE_SIGNING_PRIVATE_KEY", default="")
+# if not SIGNING_PRIVATE_KEY_HEX:
+#     raise RuntimeError("LICENSE_SIGNING_PRIVATE_KEY env var is not set!")
+
+# _signing_key = Ed25519PrivateKey.from_private_bytes(
+#     bytes.fromhex(SIGNING_PRIVATE_KEY_HEX)
+# )
+
+
+# def sign_license(
+#     tenant_id: int, license_key: str, plan: str, expires_at: datetime, is_active: bool
+# ) -> str:
+#     """Signs the license fields so the client can detect local tampering."""
+#     message = f"{tenant_id}|{license_key}|{plan}|{int(expires_at.timestamp())}|{1 if is_active else 0}"
+#     signature = _signing_key.sign(message.encode())
+#     return signature.hex()
 
 
 # def get_db():
@@ -170,8 +200,14 @@
 #     return {"service": "Kennartech License Server", "status": "running"}
 
 
+# # ── Rate limited: 10 requests per minute per IP ─────────────────
+# # Stops someone from scripting license-key guesses against this endpoint.
+# # A legitimate client only calls this on activation + once every 7 days
+# # for the soft re-verify, so 10/minute is generous for real usage but
+# # tight enough to make brute-forcing keys impractical.
 # @app.post(path="/api/verify-license")
-# async def verify_license(body: VerifyRequest):
+# @limiter.limit("10/minute")
+# async def verify_license(request: Request, body: VerifyRequest):
 #     conn = get_db()
 #     cur = conn.cursor()
 #     cur.execute(
@@ -217,17 +253,31 @@
 #     if now > expires_at + timedelta(days=3):
 #         return {"valid": False, "message": "License has expired. Please renew."}
 
+#     # ── Sign the response so the client can detect local tampering ──
+#     signature = sign_license(
+#         tenant_id=body.tenant_id,
+#         license_key=row["license_key"],
+#         plan=row["plan"],
+#         expires_at=expires_at,
+#         is_active=bool(row["is_active"]),
+#     )
+
 #     return {
 #         "valid": True,
 #         "message": "License is valid.",
 #         "plan": row["plan"],
 #         "expires_at": row["expires_at"].isoformat(),
 #         "paystack_reference": row["paystack_reference"],
+#         "signature": signature,
 #     }
 
 
+# # ── Rate limited: 20 requests per minute per IP ─────────────────
+# # Already gated by admin_secret, but this adds a second layer so
+# # someone can't hammer this endpoint trying to brute-force that secret.
 # @app.post(path="/api/create-license")
-# async def create_license(body: CreateLicenseRequest):
+# @limiter.limit("20/minute")
+# async def create_license(request: Request, body: CreateLicenseRequest):
 #     if body.admin_secret != os.getenv(key="ADMIN_SECRET", default="my-admin-secret"):
 #         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -253,8 +303,12 @@
 #     }
 
 
+# # ── Rate limited: 5 requests per minute per IP ──────────────────
+# # Stops someone spamming fake trial requests, especially since each
+# # successful call writes a new row to trial_devices/licenses in Postgres.
 # @app.post(path="/api/start-trial")
-# async def start_trial(body: StartTrialRequest):
+# @limiter.limit("5/minute")
+# async def start_trial(request: Request, body: StartTrialRequest):
 #     """
 #     Called by the desktop app on first launch.
 #     Checks this device's hardware fingerprint against every device that's
@@ -294,22 +348,37 @@
 #     cur.close()
 #     conn.close()
 
+#     # ── Sign this response too ──
+#     signature = sign_license(
+#         tenant_id=body.tenant_id,
+#         license_key=key,
+#         plan="TRIAL",
+#         expires_at=expires_at,
+#         is_active=True,
+#     )
+
 #     return {
 #         "success": True,
 #         "license_key": key,
 #         "plan": "TRIAL",
 #         "expires_at": expires_at.isoformat(),
+#         "signature": signature,
 #     }
 
 
-# # ── UPDATED: paystack_webhook with Gap 1 (expiry extension) + Gap 2 (idempotency) ──
+# # ── NOT rate limited: Paystack's own servers call this endpoint ──
+# # Limiting it risks silently dropping legitimate payment notifications.
+# # It's already protected by HMAC signature verification below, which is
+# # a stronger guarantee than a rate limit — an attacker without your
+# # Paystack secret can't produce a valid signature no matter how many
+# # requests they send.
 # @app.post(path="/paystack/webhook")
 # async def paystack_webhook(request: Request):
 #     body = await request.body()
-#     signature = request.headers.get("x-paystack-signature", "")
+#     signature_header = request.headers.get("x-paystack-signature", "")
 #     expected = hmac.new(PAYSTACK_SECRET.encode(), body, hashlib.sha512).hexdigest()
 
-#     if not hmac.compare_digest(expected, signature):
+#     if not hmac.compare_digest(expected, signature_header):
 #         raise HTTPException(status_code=400, detail="Invalid signature")
 
 #     data = json.loads(body)
